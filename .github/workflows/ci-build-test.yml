@@ -1,0 +1,285 @@
+name: Test and Build
+'on':
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  FRONTEND_DIR: frontend
+  BACKEND_DIR: backend
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+  NEXT_TELEMETRY_DISABLED: '1'
+  FASTAPI_HEALTH_PATH: /health
+  WEBHOOK_SECRET: MHv7y4zE9pXG2wqAFU1cJRt3NZmLkoBd
+  PROJECT_ID: 2a55e8cc-59f3-4dfa-9213-535ce244b18c
+  WEBHOOK_BASE: https://api.project.craftapp.ai/api/deployment/webhook/advance
+jobs:
+  frontend:
+    name: Frontend • Next.js build & tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.FRONTEND_DIR }}
+    steps:
+      - name: Checkout (exact ref)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Use Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install deps
+        id: fe_install
+        run: |
+          set -euo pipefail
+          npm i --legacy-peer-deps 2>&1 | tee "$GITHUB_WORKSPACE/frontend-install.log"
+          exit ${PIPESTATUS[0]}
+      - name: Type-check (if present)
+        id: fe_type
+        run: |
+          set -euo pipefail
+          if jq -e '.scripts["type-check"]' package.json >/dev/null 2>&1; then
+            npm run -s type-check 2>&1 | tee "$GITHUB_WORKSPACE/frontend-typecheck.log"
+            exit ${PIPESTATUS[0]}
+          else
+            echo "No type-check script, skipping" | tee "$GITHUB_WORKSPACE/frontend-typecheck.log"
+          fi
+      - name: Build Next.js
+        id: fe_build
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee "$GITHUB_WORKSPACE/frontend-build.log"
+          exit ${PIPESTATUS[0]}
+      - name: Set up Docker Buildx (container driver)
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          install: true
+          use: true
+      - name: Docker build (capture logs)
+        id: fe_docker_build
+        shell: bash
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          set -o pipefail
+          LOG="/tmp/frontend.build.log"
+          CLEAN="/tmp/frontend.build.clean.log"
+          TAIL="/tmp/frontend.build.tail.log"
+
+          # NOTE: context is '.' and Dockerfile is './Dockerfile'
+          docker buildx build \
+            --progress=plain \
+            --platform linux/amd64 \
+            --build-arg NEXT_TELEMETRY_DISABLED=1 \
+            --file ./Dockerfile \
+            . 2>&1 | tee "$LOG"
+          status=${PIPESTATUS[0]}
+
+          # Strip ANSI + redact + tail
+          sed -r "s/\x1B\[[0-9;]*[mK]//g" "$LOG" > "$CLEAN"
+          sed -E -i 's/(OPENAI[_A-Z]*KEY|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|SUPABASE_KEY|POSTGRES_PASSWORD)[=:][^[:space:]]+/REDACTED/g' "$CLEAN"
+          tail -c 65536 "$CLEAN" > "$TAIL" || cp "$CLEAN" "$TAIL"
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "log_json=$(jq -Rs . < "$TAIL")" >> "$GITHUB_OUTPUT"
+      - name: Webhook • frontend success
+        if: success()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg status "success" \
+            --arg component "frontend" \
+            --arg branch "$BRANCH" \
+            --arg commit "$COMMIT" \
+            --arg runUrl "$RUN_URL" \
+            --arg message "Frontend build passed" \
+            '{projectId:$projectId,status:$status,component:$component,branch:$branch,commit:$commit,runUrl:$runUrl,message:$message}' \
+          | curl -sS -X POST "$WEBHOOK_BASE/success/test" \
+              -H "Content-Type: application/json" \
+              -H "x-webhook-secret: $WEBHOOK_SECRET" \
+              -d @-
+      - name: Webhook • frontend failure (with logs)
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          # Combine logs (only ones that exist), redact, and tail ~50KB
+          LOGS="$GITHUB_WORKSPACE/frontend-install.log $GITHUB_WORKSPACE/frontend-typecheck.log $GITHUB_WORKSPACE/frontend-build.log"
+          touch /tmp/frontend.all.log
+
+          # Collect logs
+          for f in $LOGS; do
+            [ -f "$f" ] && {
+              echo "===== $(basename "$f") =====" >> /tmp/frontend.all.log
+              cat "$f" >> /tmp/frontend.all.log
+              echo >> /tmp/frontend.all.log
+            }
+          done
+
+          # Redact secrets
+          sed -E -i 's/(OPENAI[_A-Z]*KEY|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|SUPABASE_KEY|POSTGRES_PASSWORD)[=:][^[:space:]]+/REDACTED/g' /tmp/frontend.all.log
+
+          # Truncate to last ~50KB
+          tail -c 51200 /tmp/frontend.all.log > /tmp/frontend.tail.log || true
+
+          # Strip ANSI color codes
+          sed -r "s/\x1B\[[0-9;]*[mK]//g" /tmp/frontend.tail.log > /tmp/frontend.clean.log
+
+          # Convert to JSON string
+          LOG_JSON=$(jq -Rs . < /tmp/frontend.clean.log)
+
+          # Send webhook
+          jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg status "failure" \
+            --arg component "frontend" \
+            --arg branch "$BRANCH" \
+            --arg commit "$COMMIT" \
+            --arg runUrl "$RUN_URL" \
+            --arg message "Frontend build failed" \
+            --argjson logs "$LOG_JSON" \
+            '{projectId:$projectId,status:$status,component:$component,branch:$branch,commit:$commit,runUrl:$runUrl,message:$message,logs:$logs}' \
+          | curl -sS -X POST "$WEBHOOK_BASE/failure/test" \
+              -H "Content-Type: application/json" \
+              -H "x-webhook-secret: $WEBHOOK_SECRET" \
+              -d @-
+  backend:
+    name: Backend • FastAPI tests & smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.BACKEND_DIR }}
+    steps:
+      - name: Checkout (exact ref)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Use Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        id: be_install
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip 2>&1 | tee /tmp/backend-install.log
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt 2>&1 | tee -a /tmp/backend-install.log
+          fi
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt 2>&1 | tee -a /tmp/backend-install.log
+          fi
+          # Ensure core packages are always installed
+          pip install fastapi uvicorn[standard] pytest 2>&1 | tee -a /tmp/backend-install.log
+      - name: Static import check (fails on syntax errors)
+        id: be_import
+        run: "set -o pipefail\npython - <<'PY' 2>&1 | tee /tmp/import.log\nimport importlib, os\nmodule_path = os.getenv(\"FASTAPI_APP_PATH\",\"main\").strip()\ntry:\n    importlib.import_module(module_path)\n    print(f\"✅ Imported {module_path}\")\nexcept Exception as e:\n    raise SystemExit(f\"❌ Failed to import {module_path}:\_{e}\")\nPY\n"
+        env:
+          FASTAPI_APP_PATH: main
+      - name: Run pytest (if tests/ exists)
+        id: be_pytest
+        run: |
+          if compgen -G "tests/**/*.py" > /dev/null || [ -d tests ]; then
+            pytest -q --maxfail=1 2>&1 | tee /tmp/pytest.log
+          else
+            echo "No tests/ directory found, skipping pytest" | tee /tmp/pytest.log
+          fi
+      - name: Smoke start FastAPI and health check
+        id: be_smoke
+        timeout-minutes: 3
+        run: |
+          # Start app in background
+          nohup uvicorn main:app --host 127.0.0.1 --port 8000 >/tmp/uvicorn.log 2>&1 &
+          APP_PID=$!
+          echo "Started FastAPI (PID $APP_PID). Waiting for readiness..."
+
+          for i in {1..30}; do
+            if curl -fsS "http://127.0.0.1:8000${FASTAPI_HEALTH_PATH}" >/dev/null 2>&1; then
+              echo "✅ Healthcheck passed at http://127.0.0.1:8000${FASTAPI_HEALTH_PATH}"
+              break
+            fi
+            sleep 1
+          done
+
+          if ! curl -fsS "http://127.0.0.1:8000${FASTAPI_HEALTH_PATH}" >/dev/null 2>&1; then
+            echo "❌ Healthcheck failed. Uvicorn logs:"
+            tail -n +1 /tmp/uvicorn.log || true
+            kill $APP_PID || true
+            exit 1
+          fi
+
+          kill $APP_PID || true
+        env:
+          FASTAPI_HEALTH_PATH: ${{ env.FASTAPI_HEALTH_PATH }}
+      - name: Webhook • backend success
+        if: success()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg status "success" \
+            --arg component "backend" \
+            --arg branch "$BRANCH" \
+            --arg commit "$COMMIT" \
+            --arg runUrl "$RUN_URL" \
+            --arg message "Backend tests & smoke passed" \
+            '{projectId:$projectId,status:$status,component:$component,branch:$branch,commit:$commit,runUrl:$runUrl,message:$message}' \
+          | curl -sS -X POST "$WEBHOOK_BASE/success/test" \
+              -H "Content-Type: application/json" \
+              -H "x-webhook-secret: $WEBHOOK_SECRET" \
+              -d @-
+      - name: Webhook • backend failure (with logs)
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          # Combine main backend logs
+          touch /tmp/backend.all.log
+          for f in /tmp/backend-install.log /tmp/pytest.log /tmp/uvicorn.log /tmp/import.log; do
+            [ -f "$f" ] && { echo "===== $(basename "$f") =====" >> /tmp/backend.all.log; cat "$f" >> /tmp/backend.all.log; echo >> /tmp/backend.all.log; }
+          done
+          sed -E -i 's/(OPENAI[_A-Z]*KEY|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|SUPABASE_KEY|POSTGRES_PASSWORD)[=:][^[:space:]]+/REDACTED/g' /tmp/backend.all.log
+          tail -c 51200 /tmp/backend.all.log > /tmp/backend.tail.log || true
+          LOG_JSON=$(jq -Rs . < /tmp/backend.tail.log)
+
+          jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg status "failure" \
+            --arg component "backend" \
+            --arg branch "$BRANCH" \
+            --arg commit "$COMMIT" \
+            --arg runUrl "$RUN_URL" \
+            --arg message "Backend tests/smoke failed" \
+            --argjson logs "$LOG_JSON" \
+            '{projectId:$projectId,status:$status,component:$component,branch:$branch,commit:$commit,runUrl:$runUrl,message:$message,logs:$logs}' \
+          | curl -sS -X POST "$WEBHOOK_BASE/failure/test" \
+              -H "Content-Type: application/json" \
+              -H "x-webhook-secret: $WEBHOOK_SECRET" \
+              -d @-
+  ready_for_deploy:
+    name: Gate • All checks passed
+    runs-on: ubuntu-latest
+    needs:
+      - frontend
+      - backend
+    if: ${{ needs.frontend.result == 'success' && needs.backend.result == 'success' }}
+    steps:
+      - run: echo "✅ Frontend and Backend builds/tests are green. Safe to deploy."

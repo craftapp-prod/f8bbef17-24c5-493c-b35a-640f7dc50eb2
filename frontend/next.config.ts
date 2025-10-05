@@ -28,8 +28,6 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
   output: "export",
-  trailingSlash: true,
-  distDir: "out",
-};
+  trailingSlash: true,};
 
 export default nextConfig;
