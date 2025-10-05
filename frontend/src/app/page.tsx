@@ -1,96 +1,199 @@
-import Link from "next/link";
-import { Shield, User, Lock } from "lucide-react";
+"use client";
+import { useState } from 'react';
+import { Calculator, Plus, Minus, X, Divide, Delete, Equal, Percent, Square } from 'lucide-react';
 
-export default function Home() {
+export default function CalculatorPage() {
+  const [displayValue, setDisplayValue] = useState<string>('0');
+  const [firstOperand, setFirstOperand] = useState<string | null>(null);
+  const [operator, setOperator] = useState<string | null>(null);
+  const [waitingForSecondOperand, setWaitingForSecondOperand] = useState<boolean>(false);
+
+  const inputDigit = (digit: string) => {
+    if (waitingForSecondOperand) {
+      setDisplayValue(digit);
+      setWaitingForSecondOperand(false);
+    } else {
+      setDisplayValue(displayValue === '0' ? digit : displayValue + digit);
+    }
+  };
+
+  const inputDecimal = () => {
+    if (waitingForSecondOperand) {
+      setDisplayValue('0.');
+      setWaitingForSecondOperand(false);
+      return;
+    }
+
+    if (!displayValue.includes('.')) {
+      setDisplayValue(displayValue + '.');
+    }
+  };
+
+  const clearDisplay = () => {
+    setDisplayValue('0');
+    setFirstOperand(null);
+    setOperator(null);
+    setWaitingForSecondOperand(false);
+  };
+
+  const handleOperator = (nextOperator: string) => {
+    const inputValue = parseFloat(displayValue);
+
+    if (firstOperand === null) {
+      setFirstOperand(inputValue.toString());
+    } else if (operator) {
+      const currentValue = firstOperand || '0';
+      const result = performCalculation[operator](parseFloat(currentValue), inputValue);
+
+      setDisplayValue(result.toString());
+      setFirstOperand(result.toString());
+    }
+
+    setWaitingForSecondOperand(true);
+    setOperator(nextOperator);
+  };
+
+  const performCalculation = {
+    '+': (a: number, b: number) => a + b,
+    '-': (a: number, b: number) => a - b,
+    '*': (a: number, b: number) => a * b,
+    '/': (a: number, b: number) => a / b,
+  };
+
+  const calculateResult = () => {
+    if (firstOperand === null || operator === null) return;
+
+    const inputValue = parseFloat(displayValue);
+    const result = performCalculation[operator](parseFloat(firstOperand), inputValue);
+
+    setDisplayValue(result.toString());
+    setFirstOperand(null);
+    setOperator(null);
+    setWaitingForSecondOperand(false);
+  };
+
+  const handlePercentage = () => {
+    const value = parseFloat(displayValue) / 100;
+    setDisplayValue(value.toString());
+  };
+
+  const handleSquare = () => {
+    const value = parseFloat(displayValue);
+    setDisplayValue((value * value).toString());
+  };
+
   return (
-    <div className="flex flex-col items-center">
-      <section className="w-full py-12 md:py-24 text-center">
-        <div className="container px-4 md:px-6">
-          <div className="flex flex-col items-center space-y-4 text-center">
-            <div className="space-y-2">
-              <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl lg:text-6xl">
-                Craftapp.ai
-              </h1>
-              <p className="mx-auto max-w-[700px] text-gray-500 md:text-xl">
-                Welcome to craftapp
-              </p>
-            </div>
-            <div className="space-x-4">
-              <Link
-                href="#"
-                className="inline-flex h-10 items-center justify-center rounded-md bg-primary-600 px-8 text-sm font-medium text-white shadow transition-colors hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary-500"
-              >
-                Get Started
-              </Link>
-            </div>
+    <div className="w-full max-w-md mx-auto">
+      <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div className="p-6 bg-primary-600 text-white">
+          <div className="flex items-center justify-center mb-4">
+            <Calculator className="w-8 h-8 mr-2" />
+            <h1 className="text-2xl font-bold">MiniCalc</h1>
+          </div>
+          <div className="text-right text-4xl font-medium mb-2 truncate">
+            {displayValue}
           </div>
         </div>
-      </section>
 
-      <section className="w-full py-12 md:py-24 bg-gray-100">
-        <div className="container px-4 md:px-6">
-          <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center">
-            <h2 className="text-3xl font-bold tracking-tighter sm:text-4xl">
-              Key Features
-            </h2>
-            <p className="max-w-[85%] text-gray-500 md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed">
-              Modern full-stack web application, single page application, real
-              time game....
-            </p>
-          </div>
-          <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 py-12 md:grid-cols-3">
-            <div className="flex flex-col items-center space-y-2 rounded-lg border p-6 shadow-sm">
-              <div className="p-3 rounded-full bg-primary-100">
-                <User className="h-6 w-6 text-primary-600" />
-              </div>
-              <h3 className="text-xl font-bold">Full-Stack web app</h3>
-              <p className="text-sm text-gray-500 text-center">
-                Complete user registration, authentication, and profile
-                management...
-              </p>
-            </div>
-            <div className="flex flex-col items-center space-y-2 rounded-lg border p-6 shadow-sm">
-              <div className="p-3 rounded-full bg-primary-100">
-                <Lock className="h-6 w-6 text-primary-600" />
-              </div>
-              <h3 className="text-xl font-bold">Single Page app</h3>
-              <p className="text-sm text-gray-500 text-center">
-                amazing single page apps.
-              </p>
-            </div>
-            <div className="flex flex-col items-center space-y-2 rounded-lg border p-6 shadow-sm">
-              <div className="p-3 rounded-full bg-primary-100">
-                <Shield className="h-6 w-6 text-primary-600" />
-              </div>
-              <h3 className="text-xl font-bold">Real time apps</h3>
-              <p className="text-sm text-gray-500 text-center">
-                Amazing real time app like game, stop watch ....
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
+        <div className="grid grid-cols-4 gap-1 p-4 bg-gray-100">
+          <button
+            className="p-4 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
+            onClick={clearDisplay}
+          >
+            <Delete className="mx-auto" />
+          </button>
+          <button
+            className="p-4 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
+            onClick={handleSquare}
+          >
+            <Square className="mx-auto" />
+          </button>
+          <button
+            className="p-4 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
+            onClick={handlePercentage}
+          >
+            <Percent className="mx-auto" />
+          </button>
+          <button
+            className="p-4 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
+            onClick={() => handleOperator('/')}
+          >
+            <Divide className="mx-auto" />
+          </button>
 
-      <section className="w-full py-12 md:py-24">
-        <div className="container px-4 md:px-6">
-          <div className="mx-auto max-w-[58rem] flex flex-col items-center justify-center space-y-4 text-center">
-            <h2 className="text-3xl font-bold tracking-tighter sm:text-4xl">
-              Ready to get started?
-            </h2>
-            <p className="max-w-[85%] text-gray-500 md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed">
-              Create your own app now
-            </p>
-            <div className="flex flex-col gap-2 min-[400px]:flex-row">
-              <Link
-                href="#"
-                className="inline-flex h-10 items-center justify-center rounded-md bg-primary-600 px-8 text-sm font-medium text-white shadow transition-colors hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary-500"
-              >
-                Start Now ...
-              </Link>
-            </div>
-          </div>
+          {['7', '8', '9'].map((digit) => (
+            <button
+              key={digit}
+              className="p-4 bg-white rounded-lg hover:bg-gray-200 transition-colors"
+              onClick={() => inputDigit(digit)}
+            >
+              {digit}
+            </button>
+          ))}
+
+          <button
+            className="p-4 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
+            onClick={() => handleOperator('*')}
+          >
+            <X className="mx-auto" />
+          </button>
+
+          {['4', '5', '6'].map((digit) => (
+            <button
+              key={digit}
+              className="p-4 bg-white rounded-lg hover:bg-gray-200 transition-colors"
+              onClick={() => inputDigit(digit)}
+            >
+              {digit}
+            </button>
+          ))}
+
+          <button
+            className="p-4 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
+            onClick={() => handleOperator('-')}
+          >
+            <Minus className="mx-auto" />
+          </button>
+
+          {['1', '2', '3'].map((digit) => (
+            <button
+              key={digit}
+              className="p-4 bg-white rounded-lg hover:bg-gray-200 transition-colors"
+              onClick={() => inputDigit(digit)}
+            >
+              {digit}
+            </button>
+          ))}
+
+          <button
+            className="p-4 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
+            onClick={() => handleOperator('+')}
+          >
+            <Plus className="mx-auto" />
+          </button>
+
+          <button
+            className="col-span-2 p-4 bg-white rounded-lg hover:bg-gray-200 transition-colors"
+            onClick={() => inputDigit('0')}
+          >
+            0
+          </button>
+
+          <button
+            className="p-4 bg-white rounded-lg hover:bg-gray-200 transition-colors"
+            onClick={inputDecimal}
+          >
+            .
+          </button>
+
+          <button
+            className="p-4 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
+            onClick={calculateResult}
+          >
+            <Equal className="mx-auto" />
+          </button>
         </div>
-      </section>
+      </div>
     </div>
   );
 }

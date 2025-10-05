@@ -6,7 +6,7 @@ from api.v1.api import router as api_router
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 
-app = FastAPI(title="Your API")
+app = FastAPI(title="MiniCalc API")
 
 app.add_middleware(
     CORSMiddleware,
