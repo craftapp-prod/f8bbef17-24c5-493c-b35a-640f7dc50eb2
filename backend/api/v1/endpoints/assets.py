@@ -3,7 +3,7 @@ python
 from botocore.exceptions import ClientError
 from config import settings
 from fastapi import APIRouter, HTTPException, Response, UploadFile, File, Query
-from typing import Dict, Any
+from typing import Dict, Any, Union
 import boto3
 import mimetypes
 import os
@@ -64,10 +64,10 @@ def get_cache_control(asset_path: str) -> str:
     else:
         return "private, max-age=86400"
 
-def performCalculation(data: Dict[str, Any]) -> Dict[str, Any]:
+def performCalculation(data: Dict[str, Union[int, float, str]]) -> Dict[str, Union[bool, int, float, str, None]]:
     """
     Perform calculation based on the input data.
-    This function accepts a dictionary with string keys and values of any type,
+    This function accepts a dictionary with string keys and values of specific types,
     and returns a dictionary with the calculation results.
     """
     try:
